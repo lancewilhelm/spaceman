@@ -657,3 +657,278 @@ fn space_slide_just_settled_honors_space_gesture_timestamp() {
     runtime.backend.advance(Duration::from_secs(3));
     assert!(!runtime.space_slide_just_settled());
 }
+
+#[test]
+fn unhiding_an_app_re_parks_its_windows_from_other_workspaces() {
+    let (mut runtime, shown, other) = fullscreen_exit_runtime(false);
+    // macOS/Gecko clamps the parked window back onto the visible display edge
+    // when the application unhides after ⌘H.
+    let clamped = crate::Rect {
+        x: 1000,
+        y: 46,
+        width: 400,
+        height: 300,
+    };
+    runtime.backend.frames.insert(other.clone(), clamped);
+    runtime.backend.server_frames.insert(other.clone(), clamped);
+    runtime.backend.observation = Some(observation_for_windows(
+        "com.example.Browser",
+        &shown,
+        &[(shown.clone(), frame(50)), (other.clone(), clamped)],
+    ));
+    let now = runtime.backend.now();
+    runtime.backend.app_unhidden_at.insert(shown.app, now);
+
+    runtime.cycle(outputs(), &AtomicBool::new(false)).unwrap();
+
+    assert_eq!(
+        runtime.workspaces.workspace_of(&other),
+        Some(WorkspaceId::new(2).unwrap())
+    );
+    assert_eq!(runtime.parked.get(&other), Some(&frame(400)));
+    assert!(!runtime.parked.is_exempt(&other));
+    assert!(
+        !outputs()
+            .union()
+            .contains_center(runtime.backend.frames[&other])
+    );
+}
+
+#[test]
+fn repeated_app_unhides_never_exempt_its_other_windows_from_parking() {
+    let (mut runtime, shown, other) = fullscreen_exit_runtime(false);
+    let hidden_ws = WorkspaceId::new(2).unwrap();
+    let clamped = crate::Rect {
+        x: 1000,
+        y: 46,
+        width: 400,
+        height: 300,
+    };
+
+    for _ in 0..2 {
+        let now = runtime.backend.now();
+        runtime
+            .backend
+            .app_unhidden_at
+            .insert(shown.app.clone(), now);
+        runtime.backend.frames.insert(other.clone(), clamped);
+        runtime.backend.server_frames.insert(other.clone(), clamped);
+        runtime.backend.observation = Some(observation_for_windows(
+            "com.example.Browser",
+            &shown,
+            &[(shown.clone(), frame(50)), (other.clone(), clamped)],
+        ));
+
+        runtime.cycle(outputs(), &AtomicBool::new(false)).unwrap();
+
+        assert_eq!(runtime.workspaces.workspace_of(&other), Some(hidden_ws));
+        assert!(!runtime.parked.is_exempt(&other));
+        assert!(
+            !outputs()
+                .union()
+                .contains_center(runtime.backend.frames[&other])
+        );
+
+        // Two minutes later (inside the five-minute exemption window, past the
+        // park settle and unhide windows), confirm the window stayed parked.
+        runtime.backend.advance(Duration::from_secs(120));
+        runtime.backend.observation = Some(observation(&shown, frame(50)));
+        runtime.cycle(outputs(), &AtomicBool::new(false)).unwrap();
+    }
+
+    // Switching to workspace 2 and back still parks `other` normally.
+    runtime
+        .switch(hidden_ws, outputs(), &AtomicBool::new(false))
+        .unwrap();
+    assert!(!runtime.parked.contains_key(&other));
+    runtime
+        .switch(WorkspaceId::ONE, outputs(), &AtomicBool::new(false))
+        .unwrap();
+    assert!(runtime.parked.contains_key(&other));
+    assert!(
+        !outputs()
+            .union()
+            .contains_center(runtime.backend.frames[&other])
+    );
+}
+
+#[test]
+fn unhiding_another_app_or_past_the_arrival_window_still_re_homes_a_summoned_window() {
+    let (mut runtime, _, other) = fullscreen_exit_runtime(false);
+    let unrelated = AppInstanceId {
+        pid: 999,
+        launched_at: 999,
+    };
+    let now = runtime.backend.now();
+    runtime.backend.app_unhidden_at.insert(unrelated, now);
+
+    runtime.cycle(outputs(), &AtomicBool::new(false)).unwrap();
+    assert_eq!(
+        runtime.workspaces.workspace_of(&other),
+        Some(WorkspaceId::ONE)
+    );
+    assert!(!runtime.parked.contains_key(&other));
+
+    // Once the app's own unhide arrival window expires, a later reappearance is
+    // treated as summoned again.
+    let (mut runtime, shown, other) = fullscreen_exit_runtime(false);
+    let now = runtime.backend.now();
+    runtime.backend.app_unhidden_at.insert(shown.app, now);
+    runtime.backend.advance(Duration::from_secs(4));
+
+    runtime.cycle(outputs(), &AtomicBool::new(false)).unwrap();
+    assert_eq!(
+        runtime.workspaces.workspace_of(&other),
+        Some(WorkspaceId::ONE)
+    );
+    assert!(!runtime.parked.contains_key(&other));
+}
+
+#[test]
+fn unhiding_directly_onto_a_parked_window_does_not_re_park_it() {
+    let (mut runtime, shown, other) = fullscreen_exit_runtime(false);
+    let now = runtime.backend.now();
+    runtime.backend.app_unhidden_at.insert(shown.app, now);
+    runtime.backend.focused = Some(other.clone());
+    assert!(!runtime.returned_by_system(&other));
+}
+
+#[test]
+fn hiding_then_visiting_the_other_workspace_returns_each_window_to_its_own_workspace() {
+    let shown = window(10);
+    let other = window(11);
+    let two = WorkspaceId::new(2).unwrap();
+    let mut backend = FakeBackend {
+        observation: Some(observation(&shown, frame(50))),
+        focused: Some(shown.clone()),
+        frontmost: Some(shown.app.clone()),
+        ..FakeBackend::default()
+    };
+    backend.frames.insert(shown.clone(), frame(50));
+    backend.frames.insert(other.clone(), frame(400));
+    let mut runtime = runtime(backend);
+    let cancelled = AtomicBool::new(false);
+    bind(&mut runtime, WorkspaceId::ONE, &shown);
+    bind(&mut runtime, two, &other);
+    runtime.parked.insert(other.clone(), frame(400), None);
+    let parked = crate::geometry::parked_frame(
+        outputs().main().frame,
+        &outputs().frames().collect::<Vec<_>>(),
+        frame(400),
+    );
+    runtime.backend.frames.insert(other.clone(), parked);
+    runtime.backend.server_frames.insert(other.clone(), parked);
+    runtime.cycle(outputs(), &cancelled).unwrap();
+
+    // ⌘H hides the whole app: `shown` releases on workspace 1, and visiting
+    // workspace 2 while hidden releases `other` from workspace 2 too.
+    let shown_frame = runtime.backend.frames.remove(&shown).unwrap();
+    runtime.backend.set_aside.insert(shown.clone());
+    runtime.backend.set_aside.insert(other.clone());
+    runtime.backend.ordered_out.insert(shown.window_id);
+    runtime.backend.ordered_out.insert(other.window_id);
+    runtime
+        .backend
+        .server_frames
+        .insert(shown.clone(), shown_frame);
+    runtime.backend.focused = None;
+    runtime.backend.frontmost = None;
+    runtime.backend.observation = Some(crate::NativeObservation {
+        cycle: 1,
+        mouse_down: false,
+        applications: Vec::new(),
+    });
+    runtime.cycle(outputs(), &cancelled).unwrap();
+    assert_eq!(runtime.workspaces.workspace_of(&shown), None);
+
+    runtime.switch(two, outputs(), &cancelled).unwrap();
+    assert_eq!(runtime.workspaces.workspace_of(&other), None);
+    runtime
+        .switch(WorkspaceId::ONE, outputs(), &cancelled)
+        .unwrap();
+
+    // Unhide the app on workspace 1: `shown` rejoins workspace 1 and `other`
+    // returns to workspace 2 (parked) instead of piling onto workspace 1.
+    runtime.backend.set_aside.clear();
+    runtime.backend.ordered_out.clear();
+    runtime.backend.server_frames.clear();
+    let now = runtime.backend.now();
+    runtime
+        .backend
+        .app_unhidden_at
+        .insert(shown.app.clone(), now);
+    runtime.backend.focused = Some(shown.clone());
+    runtime.backend.frontmost = Some(shown.app.clone());
+    runtime.backend.frames.insert(shown.clone(), frame(50));
+    runtime.backend.frames.insert(other.clone(), frame(400));
+    runtime.backend.observation = Some(observation_for_windows(
+        "com.example.Browser",
+        &shown,
+        &[(shown.clone(), frame(50)), (other.clone(), frame(400))],
+    ));
+    runtime.cycle(outputs(), &cancelled).unwrap();
+
+    assert_eq!(
+        runtime.workspaces.workspace_of(&shown),
+        Some(WorkspaceId::ONE)
+    );
+    assert_eq!(runtime.workspaces.workspace_of(&other), Some(two));
+    assert!(runtime.parked.contains_key(&other));
+    assert!(
+        !outputs()
+            .union()
+            .contains_center(runtime.backend.frames[&other])
+    );
+}
+
+#[test]
+fn hiding_a_lone_window_and_unhiding_it_on_another_workspace_opens_it_there() {
+    let only = window(10);
+    let two = WorkspaceId::new(2).unwrap();
+    let mut backend = FakeBackend {
+        observation: Some(observation(&only, frame(50))),
+        focused: Some(only.clone()),
+        frontmost: Some(only.app.clone()),
+        ..FakeBackend::default()
+    };
+    backend.frames.insert(only.clone(), frame(50));
+    let mut runtime = runtime(backend);
+    let cancelled = AtomicBool::new(false);
+    bind(&mut runtime, WorkspaceId::ONE, &only);
+    runtime.cycle(outputs(), &cancelled).unwrap();
+
+    // ⌘H on workspace 1, switch to workspace 2, then unhide on workspace 2.
+    let only_frame = runtime.backend.frames.remove(&only).unwrap();
+    runtime.backend.set_aside.insert(only.clone());
+    runtime.backend.ordered_out.insert(only.window_id);
+    runtime
+        .backend
+        .server_frames
+        .insert(only.clone(), only_frame);
+    runtime.backend.focused = None;
+    runtime.backend.frontmost = None;
+    runtime.backend.observation = Some(crate::NativeObservation {
+        cycle: 1,
+        mouse_down: false,
+        applications: Vec::new(),
+    });
+    runtime.cycle(outputs(), &cancelled).unwrap();
+    runtime.switch(two, outputs(), &cancelled).unwrap();
+
+    runtime.backend.set_aside.clear();
+    runtime.backend.ordered_out.clear();
+    runtime.backend.server_frames.clear();
+    let now = runtime.backend.now();
+    runtime
+        .backend
+        .app_unhidden_at
+        .insert(only.app.clone(), now);
+    runtime.backend.focused = Some(only.clone());
+    runtime.backend.frontmost = Some(only.app.clone());
+    runtime.backend.frames.insert(only.clone(), frame(50));
+    runtime.backend.observation = Some(observation(&only, frame(50)));
+    runtime.cycle(outputs(), &cancelled).unwrap();
+
+    assert_eq!(runtime.workspaces.workspace_of(&only), Some(two));
+    assert!(!runtime.parked.contains_key(&only));
+}

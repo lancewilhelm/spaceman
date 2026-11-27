@@ -475,17 +475,30 @@ impl<B: WorkspaceBackend> WorkspaceRuntime<B> {
             .map_err(|error| format!("stale workspace cycle: {error:?}"))?;
         self.log_binding_decisions(workspace, &reconciliation.decisions, affinity_policy);
         for decision in &reconciliation.decisions {
-            let Decision::WindowInserted { window, .. } = decision else {
-                continue;
-            };
-            let source = match affinity_policy.windows.get(window) {
-                Some(FrozenWindowAffinity::ExplicitRoute(_)) => PlacementSource::Rule,
-                Some(FrozenWindowAffinity::Inferred(_)) => PlacementSource::Recall,
-                Some(FrozenWindowAffinity::CurrentDisplay) | None => PlacementSource::Active,
-                Some(_) => continue,
-            };
-            if let Some(owner) = self.workspaces.workspace_of(window) {
-                self.note_placement(window, source, owner);
+            match decision {
+                Decision::WindowInserted { window, .. } => {
+                    self.set_aside_homes.remove(window);
+                    let source = match affinity_policy.windows.get(window) {
+                        Some(FrozenWindowAffinity::ExplicitRoute(_)) => PlacementSource::Rule,
+                        Some(FrozenWindowAffinity::Inferred(_)) => PlacementSource::Recall,
+                        Some(FrozenWindowAffinity::CurrentDisplay) | None => {
+                            PlacementSource::Active
+                        }
+                        Some(_) => continue,
+                    };
+                    if let Some(owner) = self.workspaces.workspace_of(window) {
+                        self.note_placement(window, source, owner);
+                    }
+                }
+                Decision::WindowRemoved { window, .. } => {
+                    if self.backend.confirms_set_aside(window) {
+                        self.set_aside_homes.insert(window.clone(), workspace);
+                    }
+                }
+                Decision::ApplicationTerminated { app } => {
+                    self.set_aside_homes.retain(|window, _| &window.app != app);
+                }
+                _ => {}
             }
         }
         let inserted: Vec<_> = reconciliation

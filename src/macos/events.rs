@@ -17,9 +17,10 @@ use block2::RcBlock;
 use objc2::{rc::Retained, rc::autoreleasepool, runtime::ProtocolObject};
 use objc2_app_kit::{
     NSApplicationActivationPolicy, NSRunningApplication, NSWorkspace,
-    NSWorkspaceActiveSpaceDidChangeNotification, NSWorkspaceDidActivateApplicationNotification,
-    NSWorkspaceDidHideApplicationNotification, NSWorkspaceDidLaunchApplicationNotification,
-    NSWorkspaceDidTerminateApplicationNotification, NSWorkspaceDidUnhideApplicationNotification,
+    NSWorkspaceActiveSpaceDidChangeNotification, NSWorkspaceApplicationKey,
+    NSWorkspaceDidActivateApplicationNotification, NSWorkspaceDidHideApplicationNotification,
+    NSWorkspaceDidLaunchApplicationNotification, NSWorkspaceDidTerminateApplicationNotification,
+    NSWorkspaceDidUnhideApplicationNotification,
 };
 use objc2_application_services::{AXError, AXObserver, AXUIElement};
 use objc2_core_foundation::{
@@ -35,6 +36,7 @@ use super::{
     app_instance_with_pid,
     ax::{application_element, attribute, cf_array_items, set_ax_timeout, window_server_windows},
     is_own_application,
+    visibility::{note_app_hidden, note_app_terminated, note_app_unhidden},
 };
 
 const FALLBACK_POLL_SECONDS: f64 = 0.1;
@@ -50,6 +52,16 @@ const REGISTRATION_RETRY_MAX: Duration = Duration::from_secs(60);
 /// Title changes (terminal spinners, page loads) refresh at most this often.
 /// Titles only matter to `title` rules, which tolerate this much delay.
 const TITLE_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
+
+fn notification_app(notification: NonNull<NSNotification>) -> Option<AppInstanceId> {
+    // SAFETY: AppKit passes a live `NSNotification` to the observer block.
+    let user_info = unsafe { notification.as_ref() }.userInfo()?;
+    // SAFETY: `NSWorkspaceApplicationKey` is an immutable AppKit string constant.
+    let value = user_info.objectForKey(unsafe { NSWorkspaceApplicationKey })?;
+    let application = value.downcast_ref::<NSRunningApplication>()?;
+    let pid = application.processIdentifier();
+    (pid > 0).then(|| app_instance_with_pid(application, pid))
+}
 
 pub struct WindowEventMonitor {
     invalidation: Arc<EventInvalidation>,
@@ -254,36 +266,61 @@ fn observe_workspace(
         ));
         // ⌘H posts no window notification (unlike ⌘M's `AXWindowMiniaturized`), so without
         // these the siblings waited for the fallback refresh before re-filling the hole.
+        // Recording hide/unhide per app also lets parking tell an unhide's side-effect
+        // windows from a window the user summoned.
+        let hide_invalidation = Arc::clone(invalidation);
+        let hide = RcBlock::new(move |notification: NonNull<NSNotification>| {
+            if let Some(app) = notification_app(notification) {
+                note_app_hidden(app);
+            }
+            hide_invalidation.app_visibility_changed();
+        });
         // SAFETY: Same as above.
-        let visibility = unsafe {
-            [
-                NSWorkspaceDidHideApplicationNotification,
-                NSWorkspaceDidUnhideApplicationNotification,
-            ]
-        };
-        for name in visibility {
-            let invalidation = Arc::clone(invalidation);
-            let block = RcBlock::new(move |_: NonNull<NSNotification>| {
-                invalidation.app_visibility_changed();
-            });
-            observers.push(observe(name, block));
-        }
+        observers.push(observe(
+            unsafe { NSWorkspaceDidHideApplicationNotification },
+            hide,
+        ));
+        let unhide_invalidation = Arc::clone(invalidation);
+        let unhide = RcBlock::new(move |notification: NonNull<NSNotification>| {
+            if let Some(app) = notification_app(notification) {
+                note_app_unhidden(app);
+            }
+            unhide_invalidation.app_visibility_changed();
+        });
         // SAFETY: Same as above.
-        let lifecycle = unsafe {
-            [
-                NSWorkspaceDidLaunchApplicationNotification,
-                NSWorkspaceDidTerminateApplicationNotification,
-            ]
-        };
-        for name in lifecycle {
-            let invalidation = Arc::clone(invalidation);
-            let waker = Arc::clone(waker);
-            let block = RcBlock::new(move |_: NonNull<NSNotification>| {
-                invalidation.sweep_requested.store(true, Ordering::Release);
-                waker.wake();
-            });
-            observers.push(observe(name, block));
-        }
+        observers.push(observe(
+            unsafe { NSWorkspaceDidUnhideApplicationNotification },
+            unhide,
+        ));
+        let launch_invalidation = Arc::clone(invalidation);
+        let launch_waker = Arc::clone(waker);
+        let launch = RcBlock::new(move |_: NonNull<NSNotification>| {
+            launch_invalidation
+                .sweep_requested
+                .store(true, Ordering::Release);
+            launch_waker.wake();
+        });
+        // SAFETY: Same as above.
+        observers.push(observe(
+            unsafe { NSWorkspaceDidLaunchApplicationNotification },
+            launch,
+        ));
+        let term_invalidation = Arc::clone(invalidation);
+        let term_waker = Arc::clone(waker);
+        let terminate = RcBlock::new(move |notification: NonNull<NSNotification>| {
+            if let Some(app) = notification_app(notification) {
+                note_app_terminated(&app);
+            }
+            term_invalidation
+                .sweep_requested
+                .store(true, Ordering::Release);
+            term_waker.wake();
+        });
+        // SAFETY: Same as above.
+        observers.push(observe(
+            unsafe { NSWorkspaceDidTerminateApplicationNotification },
+            terminate,
+        ));
         observers
     })
 }

@@ -67,9 +67,9 @@ impl<B: WorkspaceBackend> WorkspaceRuntime<B> {
             // back off-screen instead of re-homing it.
             return None;
         }
-        if self.returned_by_space_slide(&window.id) {
-            // macOS put it back while leaving the app's fullscreen Space (#489);
-            // parking pushes it back off-screen.
+        if self.returned_by_system(&window.id) {
+            // macOS put it back while leaving the app's fullscreen Space (#489)
+            // or unhiding the app after ⌘H; parking pushes it back off-screen.
             return None;
         }
         self.honor_reappearance(&window.id, frame, original, target)
@@ -350,8 +350,7 @@ impl<B: WorkspaceBackend> WorkspaceRuntime<B> {
             !server.position_approximately_equals(from, RESTORE_CONFIRM_TOLERANCE)
         });
         if (self.parked.settling(window, now) && !moved_since_park)
-            || (context.frontmost.as_ref() == Some(&window.app)
-                && !self.returned_by_space_slide(window))
+            || (context.frontmost.as_ref() == Some(&window.app) && !self.returned_by_system(window))
         {
             return None;
         }

@@ -641,3 +641,192 @@ on the same letter.
   workspaces 1-3, reopened minutes later in the background),
   `a_window_parked_by_spaceman_is_never_rescued`,
   `a_window_at_a_parking_spot_that_cannot_move_backs_off_and_is_rescued_later` (failed moves are
+  retried after a delay that doubles from 2 s to 32 s, at once when the window's frame or the
+  displays change, issue 481), `a_window_that_moves_after_a_failed_rescue_is_tried_again_at_once`,
+  `a_window_one_pixel_off_its_parking_spot_is_still_rescued`,
+  `one_pixel_and_empty_windows_at_a_parking_spot_are_never_rescued`,
+  `a_reopened_window_its_title_rule_ignores_stays_at_the_parking_spot` (an exact-title ignore
+  ahead of a route for every window of a never-observed app; a title not yet readable waits,
+  issue 562), `an_ignored_window_at_a_parking_spot_is_judged_once` (no further title reads or
+  moves until its frame changes, issue 562),
+  `a_single_window_cold_launch_still_opens_on_the_active_workspace`, and
+  `reopened_notes_find_their_workspaces_by_size`, and
+  `same_size_reopened_windows_match_by_document_and_fuzzy_title_in_reverse_order`;
+  `src/window_memory.rs`: `exact_document_wins_over_same_size_windows_in_reverse_order`,
+  `exact_normalized_title_wins_over_same_size_windows_in_reverse_order`,
+  `fuzzy_title_matches_unread_counters_and_project_segments_without_false_positives`,
+  `single_segment_utility_title_does_not_keep_shared_suffix_as_identity` (a shared app suffix is
+  ignored even when a one-part title such as `Quick Help` reopens alongside it, so exact frames
+  decide, issue 623), and `sizes_match_before_creation_order`. Whether AppKit restores a quit app's windows in creation
+  order on real hardware is not covered.
+- Unit (FakeBackend), `src/app/tests/parking.rs`: parking without minimizing, re-parking windows that
+  drift back, honoring windows that keep un-parking (parking exemption, working tree), and keeping
+  slots when Accessibility briefly cannot find a hidden window. `src/app/tests/settle_grace.rs`:
+  `background_unhide_during_a_fresh_park_is_re_parked_without_waiting_for_the_grace` and
+  `stale_readback_after_a_cross_display_park_waits_out_the_grace`.
+  `src/app/tests/reported/sleep_keeps_inaccessible_tile.rs`: time with every display asleep never
+  runs out the Accessibility grace, and an awake grace still retires the window (#739).
+- Unit, `src/geometry.rs`: `parking_leaves_a_single_corner_pixel_on_screen`,
+  `a_window_held_above_its_parking_corner_is_still_parked`,
+  `a_window_held_up_by_its_title_bar_stays_off_a_shorter_neighbor`,
+  `a_window_held_up_stays_off_a_neighbors_menu_bar`,
+  `a_side_dock_moves_parking_to_the_other_corner`, and
+  `a_display_below_falls_back_to_the_edge_strip_not_its_corner`: parking targets a bottom corner,
+  accepts macOS holding the window up by its title bar, and keeps every held-up position off other
+  displays and off menu bars and Docks; when a display below blocks both corners it parks along its
+  own display's side edge rather than another display's corner. How far macOS holds it up is not
+  covered.
+- Unit (FakeBackend), `src/app/tests/reconciliation.rs`:
+  `an_app_that_quits_while_hidden_releases_its_tiles_and_recovery_metadata` (an app that quits
+  while its windows are parked frees their tiles without the workspace being shown) and
+  `a_failed_incarnation_lookup_does_not_forget_a_hidden_app_the_window_server_still_lists` (a
+  running app whose process lookup briefly fails keeps its parked windows while the window server,
+  read directly, still lists them under its pid, issue 735).
+- Unit (FakeBackend), `src/app/tests/space_transitions.rs`:
+  `cmd_tab_out_of_native_fullscreen_lands_on_the_target_workspace`,
+  `a_focus_follow_a_space_slide_interrupts_is_retried` and
+  `a_failed_focus_follow_without_a_space_change_stays_suppressed` (focus follow across a Space
+  slide), `a_space_slide_holds_layout_until_it_settles`, and
+  `a_desktop_swipe_does_not_tile_both_desktops_windows_together` (after a slide settles, a window
+  about to be adopted on screen releases the outgoing desktop's off-screen tile in the same cycle,
+  #431). `swiping_between_desktops_never_tiles_both_desktops_together` and
+  `the_first_cycle_after_a_swipe_releases_a_window_adopted_mid_swipe` (#431): in the first
+  cycles after a slide settles, a bound window the slide ordered out is released at once when the
+  snapshot is clean and windows arrived on screen, without waiting for the app to confirm it has no
+  windows; `a_swipe_keeps_the_slot_of_an_app_whose_snapshot_timed_out`,
+  `an_ordered_out_window_without_a_swipe_still_settles` and
+  `a_long_settled_swipe_no_longer_releases_ordered_out_windows` keep the timeout and settle
+  protections. `fingers_swiping_between_desktops_hold_layout_before_any_space_change` (#513):
+  three or four fingers on the trackpad hold layout like a Space slide, before macOS posts any
+  change and when a swipe is reversed, so the outgoing desktop's tile is not resized and the
+  arriving window is not adopted beside it; `src/macos/swipes.rs`
+  `horizontal_three_or_four_finger_slides_arm_space_hold_until_lift` and
+  `stationary_three_finger_touch_and_vertical_swipe_never_freeze_layout` cover which touches
+  count. `a_thumb_lifting_mid_swipe_still_arms_space_hold` (`src/macos/swipes.rs`) and
+  `space_slide_survives_finger_count_changes_that_spend_a_swipe` (`src/swipe.rs`) (#677): a
+  finger-count change mid-swipe (a resting thumb lifting from four fingers to three, a fifth
+  contact) still starts the hold once the remaining three or four fingers slide sideways.
+  `a_space_change_reported_a_second_after_the_fingers_lift_is_still_held` (#572): macOS reports a
+  swipe's Space change about a second after the fingers lift, and layout holds for about 1.5 s
+  after the last touch, so neither desktop's windows are written before the change. That delay is
+  covered only in the test backend; macOS's own timing is not, nor is a desktop change made
+  without the trackpad reporting the arriving desktop's windows before the change.
+- Unit, `src/app/input.rs`: `focused_commands_wait_out_a_reported_space_change` (#770): move,
+  focus-cycle and directional-focus commands queued within the hold after a reported Space change
+  wait until it settles; with neither a report nor a recent swipe touch they don't, and switches,
+  swipes and retiles never wait.
+  `focused_commands_wait_out_a_desktop_swipe_before_its_report` (#777): a move queued after a
+  three- or four-finger touch and before any report waits until ~1.5 s after the touch, a report
+  that follows extends the wait to 0.7 s after it, and a switch is not held.
+  The main loop's wait-then-retile-then-run sequencing (`src/app/app_loop/automatic.rs`) is not
+  covered.
+- Unit (FakeBackend), `src/app/tests/state_machine.rs`: a seeded, virtual-time run of 3,000 random
+  switches, moves, floats, pins, scratchpad commands, drags, resizes, display changes, Space
+  slides, restorations, window opens and closes and outside focus changes, checking after every
+  step that each window has one residency, every layout tree matches its slots, every parked
+  window is owned and its recovery frame persisted, and focus history and requests stay coherent.
+- Unit: `src/hotkeys/delivery.rs` pairs Option presses seen by the key tap with Carbon deliveries
+  in either order and reports a press still undelivered after 750 ms. The tap
+  (`src/macos/keys.rs`) and the re-registration in `src/app/app_loop/hotkey_health.rs` are not
+  covered.
+- Live harness (not run): `scripts/live-workspaces.sh` switches 6/7/8 by real hotkeys, moves without
+  switching, rapid-switch coalescing, and hard-kill recovery. Needs two displays and AeroSpace.
+- Unit (FakeBackend), `src/app/tests/move_handoff.rs`: moving the focused window (or all windows
+  of the focused app via `move-app`) to an inactive workspace without `--follow` hands keyboard
+  focus to a remaining visible tile or float on the current workspace (and remembers it in
+  Fullscreen Layout), while `move --follow` switches straight to the target workspace without an
+  intermediate handoff. When a later window of a `move-app` refuses its move, the windows already
+  moved stay on the target and focus still leaves the parked focused window for a visible window on
+  the source (#688). A float the user minimized or hid on the source is never the handoff target:
+  with only that float left, focus stays guarded on the moved window, and with a tile still
+  showing, the tile gets focus even if the float was the last one focused (#743).
+- Unit (FakeBackend), `src/app/tests/reported/move_app_tab_switch.rs`: a tab selected in a group
+  just as `move-app` runs takes the moved tile on the visible target workspace on another display,
+  while two new windows where the tile was, or a tab selected after the 2 s settle, claim nothing
+  (#759).
+- Unit (FakeBackend), `src/app/tests/move_tab.rs`: a detached tab goes straight to a hidden
+  workspace (never tiled on the source) ahead of a route rule while focus stays on the source,
+  `--follow` switches to it, a visible target on another display tiles it, an AppKit tab group's
+  next tab keeps the source slot, a single-tab window moves whole (with and without `--follow`), a
+  late window is claimed by a prompt re-observation, expiry and a failed press leave nothing pending,
+  a second move-tab while one is pending lets the earlier tab reach its own workspace first (#570)
+  and waits out a detach whose window never appears, a move-tab after a `--follow` detaches the
+  group's next tab even when the first settled before it ran, from a shown or a hidden source, and
+  without `--follow` leaves focus on the followed tab (#597; the fake presses only on the key
+  window), and another app's new window is never claimed. `src/macos/tabs.rs` covers menu-item
+  matching and loading AppKit's translations; `src/control.rs`, `src/shortcuts.rs` and
+  `src/hotkeys.rs` cover parsing and bindings. Pressing the real menu item in Safari, Chromium or Ghostty is not covered.
+- Live gauntlet, `scripts/gauntlet.sh`: `ctl switch` parks every window to at most a one-point strip,
+  records each original frame in `parked-windows.json`, restores the exact frames on the way back and
+  empties the file; `ctl move` parks the window with its frame recorded and hands keyboard focus to
+  a remaining visible tile so a SIGKILL + relaunch keeps it on the target workspace.
+
+- Unit, `src/app/tests/dispatch.rs` and `src/app/tests/switching.rs`: the HUD event's rows per
+  display, the visible workspace on each, and `from` only on the display that switched.
+- Unit, `agent/src/hud/tests.rs`: when the HUD shows, holds, leaves and comes back, a fresh show
+  starting on the workspace the switch left, the Layouts row's width, the Icons apps, which
+  panel each display keeps as displays come and go, and the top/bottom geometry (the panel's
+  edge, the capsule's 60 pt inset, and the 6 pt entry offset's direction). `agent/src/hud/motion_tests.rs` steps the
+  overlay's own view at 120 Hz on a virtual clock, for both styles, and reads back each frame's
+  presented rects, opacity and scale: a burst of switches, a hide and a show pass Rune's motion
+  gate (no pop, jump, cut fade or overshoot); the marker goes one way per switch, its leading
+  edge first, and a switch mid-flight carries it on without slowing; shown again, it starts where
+  the switch left; the other display's row stays at rest; a moved window's icon changes groups;
+  the widest row fits the panel with the marker in view; Reduce Motion moves nothing. Not
+  covered: the panels themselves (ordering in and out, the first show's fade, moving between
+  displays, a display unplugged while one is up) and how the motion looks on a display.
+  Multi-display has not been seen on real hardware.
+
+## Gotchas
+
+- Unit tests model frames, not z-order or paint timing: "outgoing parked after incoming laid out"
+  does not prove nothing flashes. See the stacked-window flash in
+  [Fullscreen Layout](fullscreen-layout.md#gotchas).
+- Some apps (Electron, Ghostty) move their own windows back on screen; Spaceman re-parks, then after
+  repeated undoing honors the reappearance and re-homes the window to the visible workspace. In the
+  working tree, a window that does so twice in five minutes stays tiled but is no longer hidden
+  across switches (`parking_exempt`).
+- Leaving an app's native fullscreen Space (browser video) or unhiding a hidden app (`⌘H` then
+  unhide) makes macOS move that app's windows parked on other workspaces back onto the screen. Right
+  after a Space slide or app unhide, only the focused window counts as summoned; the app's other
+  parked or previously set-aside windows are re-parked on their own workspaces instead of being
+  re-homed or marked `parking_exempt` (#489,
+  `leaving_native_fullscreen_re_parks_the_apps_windows_from_other_workspaces`,
+  `unhiding_an_app_re_parks_its_windows_from_other_workspaces`,
+  `repeated_app_unhides_never_exempt_its_other_windows_from_parking`,
+  `hiding_then_visiting_the_other_workspace_returns_each_window_to_its_own_workspace`).
+- A window moved back on screen in the background while its first park is still settling, away
+  from where it was parked from (an app unhidden in the background, #693), is re-parked at once
+  instead of after the two-second grace. A readback still at the pre-park spot keeps waiting, so a
+  stale report is never counted as the app undoing the park.
+- Focus-follow switches workspaces as a side effect of any app activation, including ones the user
+  did not intend (an app raising itself). Each `focus follow` line in `agent.log` records recent
+  input timing and whether Command was held, so Command-Tab can be told apart from self-activation.
+- Since macOS 14, AppKit activation from a background app is cooperative and ignored, so a switch
+  that only called it showed the incoming window while keys stayed in the app focus left (issue
+  92). Spaceman sets `AXFrontmost` on the incoming app instead. When focusing still fails,
+  `agent.log` gets `switch focus failed: workspace <ws> window <id>` (never a title).
+- macOS keeps a parked window's title bar on screen, so a one-pixel-wide slice of it stays at the
+  display's bottom corner: about 32 px tall for a plain title bar, 66 px with a unified toolbar.
+- Some apps (Arc) answer `AXFrontmost` with success and still stay behind the app focus left.
+  After focusing, Spaceman polls the frontmost app every 10 ms and repeats the focus every 50 ms,
+  at most three times (200 ms bound).
+- Restored-arrangement recall needs the app's first observation to list two or more windows. An app
+  that macOS restores one window at a time, slowly enough that Spaceman sees a lone window first,
+  opens on the active workspace as before.
+- Panels and non-standard windows are never parked, so they show on every workspace; an empty
+  workspace exposes whatever unmanaged windows sit behind managed ones.
+- macOS can stop delivering Carbon hotkeys to a running agent (seen twice on Nov 9, 2026, cause
+  unknown). A listen-only key tap sees an Option shortcut Carbon didn't take; after 750 ms the agent
+  logs `hotkey: <name> pressed but macOS did not deliver it`, registers every shortcut again (at
+  most every 5 s) and runs the missed action. Each delivered press logs `hotkey: <name>`.
+- Config edits (rules, display assignments, and HUD settings) reload automatically before the next
+  command (a workspace's floats move with a new assignment and show on its new display, whether
+  they were parked or still on screen when it changed; a reload that reveals a workspace on its
+  new display lays its tiles out there); new named-workspace hotkeys register on the next app start, and `ctl restart` exits
+  without relaunching.
+- The HUD's first appearance after launch only fades in: its panel has drawn nothing yet for the
+  capsule to rise from. Every later one enters with the full motion.
+- Try the HUD's motion without switching workspaces in the Playground (`⇧⌘D`, HUD > hud-switch):
+  both styles at once. `N`/`P` step a workspace, `R` and `B` switch several quickly, `M` moves
+  a window, `L` changes the layout, `H` hides it and shows the next workspace.

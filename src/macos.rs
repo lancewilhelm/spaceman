@@ -11,6 +11,7 @@ mod swipes;
 mod tabs;
 #[cfg(test)]
 mod tests;
+mod visibility;
 mod window_attributes;
 
 use std::collections::{HashMap, HashSet};
@@ -53,6 +54,7 @@ pub use presenter::{
 pub use spaces::{last_active_space_change, last_space_gesture, take_active_space_changed};
 pub use swipes::SwipeMonitor;
 pub use tabs::{TabDetachResult, detach_tab};
+pub use visibility::last_app_unhide;
 
 use apply::{cache_managed_window, evict_managed_app, prune_managed_app};
 use ax::{

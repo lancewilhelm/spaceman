@@ -108,6 +108,10 @@ pub(super) trait WorkspaceBackend {
     fn space_gesture_at(&mut self) -> Option<Instant> {
         None
     }
+    /// When `app` was last unhidden (after ⌘H / Hide Application).
+    fn app_unhidden_at(&mut self, _app: &AppInstanceId) -> Option<Instant> {
+        None
+    }
     fn raise_window(&mut self, window: &crate::PhysicalWindowId) -> bool;
     fn focus_window(&mut self, window: &crate::PhysicalWindowId) -> bool;
     /// Presses the app's "Move Tab to New Window" for its focused `window`.
@@ -305,6 +309,10 @@ impl WorkspaceBackend for MacWorkspaceBackend {
 
     fn space_gesture_at(&mut self) -> Option<Instant> {
         macos::last_space_gesture()
+    }
+
+    fn app_unhidden_at(&mut self, app: &AppInstanceId) -> Option<Instant> {
+        macos::last_app_unhide(app)
     }
 
     fn raise_window(&mut self, window: &crate::PhysicalWindowId) -> bool {

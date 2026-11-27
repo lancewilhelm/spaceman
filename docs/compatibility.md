@@ -59,7 +59,10 @@ Electron applications re-assert saved bounds on screen-parameter changes — it 
 off screen with its recovery frame intact, even in the first moments after it was parked (an
 application unhidden in the background). The same holds for a frontmost application's other
 windows that macOS moves back on screen as it slides out of that application's native fullscreen
-Space: for about two seconds after the slide settles, only the focused window counts as summoned.
+Space, or when a hidden application unhides after ⌘H: for a brief arrival window (about two seconds
+after a Space slide settles, or three seconds after an app unhides), only the focused window counts
+as summoned, and the app's other parked or previously set-aside windows return to their own
+workspaces instead of joining the active workspace.
 If an application undoes several re-parks in a row, the
 reappearance is honored after all and the window is re-homed. A window whose reappearance is honored
 twice within five minutes becomes parking-exempt for the rest of the session: it remains owned and

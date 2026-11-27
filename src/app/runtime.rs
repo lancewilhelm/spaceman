@@ -75,6 +75,11 @@ pub(super) struct WorkspaceRuntime<B = MacWorkspaceBackend> {
     /// Fullscreen Layout tiles each workspace lost to a hide or minimize,
     /// whose return brings the mode back once it emptied (#668).
     pub(super) fullscreen_set_aside: HashMap<WorkspaceId, cycle::SetAsideTiles>,
+    /// Last workspace of each tiled window released because it was hidden (⌘H)
+    /// or minimized (⌘M), so unhiding a multi-window app returns its other
+    /// windows to their previous workspaces even if those workspaces were
+    /// visited while the app was hidden.
+    pub(super) set_aside_homes: HashMap<crate::PhysicalWindowId, WorkspaceId>,
     pub(super) exact_spacing_workspaces: HashSet<WorkspaceId>,
     pub(super) persisted_workspace_state: crate::workspace::WorkspaceState,
     /// Title-free placements that survive application relaunches and reboots.
@@ -405,6 +410,7 @@ impl<B: WorkspaceBackend> WorkspaceRuntime<B> {
             gesture: None,
             fullscreen_left_at: HashMap::new(),
             fullscreen_set_aside: HashMap::new(),
+            set_aside_homes: HashMap::new(),
             exact_spacing_workspaces: WorkspaceId::all().filter(|_| has_spacing).collect(),
             persisted_workspace_state,
             memory: MemoryState::default(),

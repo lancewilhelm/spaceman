@@ -12,6 +12,11 @@ use super::*;
 /// How long after a Space slide settles the windows it brought on screen are
 /// taken as the display's whole desktop (#431).
 const SLIDE_ARRIVAL_WINDOW: Duration = Duration::from_secs(2);
+/// How long after an application unhides (⌘H -> unhide) its non-focused parked
+/// windows that macOS moved back on screen are re-parked rather than re-homed.
+/// Longer than the 2 s park settle grace so a window unhidden right after a
+/// park still gets re-parked once its settle window ends.
+const UNHIDE_ARRIVAL_WINDOW: Duration = Duration::from_secs(3);
 
 impl<B: WorkspaceBackend> WorkspaceRuntime<B> {
     /// When the macOS Space slide under way settles, while one is. A trackpad
@@ -48,12 +53,22 @@ impl<B: WorkspaceBackend> WorkspaceRuntime<B> {
         self.backend.now() < settled + SLIDE_ARRIVAL_WINDOW
     }
 
+    /// Whether `app` unhid moments ago (after ⌘H / Hide Application), so macOS
+    /// may have just moved its parked windows from other workspaces back on screen.
+    pub(super) fn app_just_unhid(&mut self, app: &AppInstanceId) -> bool {
+        let Some(unhidden) = self.backend.app_unhidden_at(app) else {
+            return false;
+        };
+        self.backend.now() < unhidden + UNHIDE_ARRIVAL_WINDOW
+    }
+
     /// Whether a parked window of the frontmost app that is back on screen was
-    /// put there by macOS rather than summoned by the user. Leaving an app's
-    /// native fullscreen Space moves its other windows back to their last
-    /// on-screen frames (#489); the window the user lands on is the focused one.
-    pub(super) fn returned_by_space_slide(&mut self, window: &crate::PhysicalWindowId) -> bool {
-        self.space_slide_just_settled() && self.backend.focused_window().as_ref() != Some(window)
+    /// put there by macOS rather than summoned by the user: either by leaving
+    /// the app's native fullscreen Space (#489), or by unhiding the app after ⌘H.
+    /// In both cases only the focused window counts as summoned.
+    pub(super) fn returned_by_system(&mut self, window: &crate::PhysicalWindowId) -> bool {
+        (self.space_slide_just_settled() || self.app_just_unhid(&window.app))
+            && self.backend.focused_window().as_ref() != Some(window)
     }
 
     /// The status of a background cycle held back by a Space slide. Nothing

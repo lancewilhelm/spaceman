@@ -410,6 +410,7 @@ impl<B: WorkspaceBackend> WorkspaceRuntime<B> {
                 window,
                 workspace
             );
+            self.set_aside_homes.insert(window.clone(), workspace);
             self.forget_window(workspace, &window);
             incoming.retain(|other| other != &window);
             released.push(window);

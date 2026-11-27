@@ -77,6 +77,8 @@ impl<B: WorkspaceBackend> WorkspaceRuntime<B> {
         // process can appear in the same observation that reports the old
         // one terminated.
         self.note_absent_departures(observation);
+        self.set_aside_homes
+            .retain(|window, _| self.workspaces.workspace_of_any(window).is_none());
         let mut affinities = HashMap::new();
         let mut float_homes = Vec::new();
         let mut fullscreen_hud = None;
@@ -161,6 +163,7 @@ impl<B: WorkspaceBackend> WorkspaceRuntime<B> {
                 let rules = self.config.patch(&app.bundle_id, window);
                 let patch = rules.over(DispositionPatch::traits(window.resizable, tiled));
                 if patch.is_ignored() {
+                    self.set_aside_homes.remove(&window.id);
                     if let Some(owner) = self.workspaces.workspace_of_any(&window.id) {
                         log_event!("release {:?} from workspace {}: ignored", window.id, owner);
                         self.forget_window(owner, &window.id);
@@ -360,9 +363,20 @@ impl<B: WorkspaceBackend> WorkspaceRuntime<B> {
                 } else {
                     app_owns_window = true;
                     app_owns_tiled = true;
-                    recalled.map_or(FrozenWindowAffinity::CurrentDisplay, |placement| {
-                        FrozenWindowAffinity::Inferred(placement.workspace)
-                    })
+                    recalled
+                        .map(|placement| placement.workspace)
+                        .or_else(|| {
+                            self.set_aside_return_workspace(
+                                &window.id,
+                                focused.as_ref(),
+                                windows,
+                                visible,
+                            )
+                        })
+                        .map_or(
+                            FrozenWindowAffinity::CurrentDisplay,
+                            FrozenWindowAffinity::Inferred,
+                        )
                 };
                 self.workspaces.set_rule_pinned(&window.id, patch.pins());
                 affinities.insert(window.id.clone(), affinity);
@@ -380,6 +394,46 @@ impl<B: WorkspaceBackend> WorkspaceRuntime<B> {
             visible_workspaces: visible.iter().map(|resolved| resolved.workspace).collect(),
             fullscreen_hud,
         })
+    }
+
+    /// When an app unhides (`⌘H` -> unhide), a window that was released as set
+    /// aside while its workspace was visited returns to its previous workspace
+    /// instead of piling onto the active workspace beside the app's other
+    /// window. A lone focused window unhiding onto another workspace stays
+    /// where the user unhid it unless another returning window of the same app
+    /// belongs on a visible workspace.
+    fn set_aside_return_workspace(
+        &mut self,
+        window: &crate::PhysicalWindowId,
+        app_focused: Option<&crate::PhysicalWindowId>,
+        windows: &[crate::ObservedWindow],
+        visible: &[ResolvedWorkspace],
+    ) -> Option<WorkspaceId> {
+        let target = *self.set_aside_homes.get(window)?;
+        if !self.app_just_unhid(&window.app) {
+            return None;
+        }
+        if !self.workspaces.is_enabled(target)
+            || !self
+                .scope
+                .manages_selector(self.workspaces.assignment(target))
+        {
+            return None;
+        }
+        let focused = self.backend.focused_window();
+        let is_focused = focused.as_ref().or(app_focused) == Some(window);
+        if is_focused {
+            let other_belongs_visible = windows.iter().any(|other| {
+                other.id != *window
+                    && self.set_aside_homes.get(&other.id).is_some_and(|home| {
+                        visible.iter().any(|resolved| resolved.workspace == *home)
+                    })
+            });
+            if !other_belongs_visible {
+                return None;
+            }
+        }
+        Some(target)
     }
 
     /// Whether `window` is the incoming native tab of one of its app's tiles on the visible

@@ -238,6 +238,7 @@ impl<B: WorkspaceBackend> WorkspaceRuntime<B> {
     /// after is treated as a relaunch.
     pub(super) fn note_departure(&mut self, app: &AppInstanceId) {
         self.memory.considered.remove(app);
+        self.set_aside_homes.retain(|window, _| &window.app != app);
         if let Some(bundle_id) = self.memory.bundles.remove(app)
             && is_rememberable_bundle_id(&bundle_id)
         {

@@ -165,6 +165,8 @@ struct FakeBackend {
     displays_asleep: bool,
     /// When three or four fingers last touched the trackpad.
     space_gesture_at: Option<Instant>,
+    /// When each application was last unhidden (after ⌘H / Hide Application).
+    app_unhidden_at: HashMap<AppInstanceId, Instant>,
     /// How long ago the user last typed or clicked; `None` (unknown) reads as
     /// possible input, so a late sibling handoff is followed.
     recent_input: Option<macos::RecentInput>,
@@ -492,6 +494,10 @@ impl WorkspaceBackend for FakeBackend {
 
     fn space_gesture_at(&mut self) -> Option<Instant> {
         self.space_gesture_at
+    }
+
+    fn app_unhidden_at(&mut self, app: &AppInstanceId) -> Option<Instant> {
+        self.app_unhidden_at.get(app).copied()
     }
 
     fn raise_window(&mut self, window: &crate::PhysicalWindowId) -> bool {

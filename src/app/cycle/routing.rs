@@ -76,6 +76,7 @@ impl<B: WorkspaceBackend> WorkspaceRuntime<B> {
                 canvas,
                 anchor,
             );
+            self.set_aside_homes.remove(&window);
             log_event!("route {window:?} -> workspace {target} ({affinity:?})");
             match affinity {
                 FrozenWindowAffinity::ExplicitRoute(_) => {
